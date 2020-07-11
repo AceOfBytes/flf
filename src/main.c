@@ -33,18 +33,23 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <stdio.h>
 #include <libmff.h>
 #include <string.h>
+#include <sys/sysinfo.h>
+#include <inttypes.h>
 
 int main(int argc, char **argv)
 {
-	struct dev_info iblkct;
-	struct dev_info oblkct;
+	struct dev_info inblkinf;
+	struct dev_info oublkinf;
+	struct sysinfo sysinf;
+	unsigned long memlim = 0; /* 0 is the same as saying use 50% or if size */
 	char *idev = NULL;
 	char *odev = NULL;
 	int nocopy = 0;
-	int cpr;
 	int sync = 0;
+	int cpr;
 	int i;
 
+	fprintf(stderr, "license: BSD-3-Clause\nCopyright (c) 2020, Matheus Xavier Silva\nAll rights reserved.\n");
 	if (argc <= 1)
 	{
 		printf("need at least one argument\n");
@@ -60,12 +65,28 @@ int main(int argc, char **argv)
 				odev = s_strcpy(odev, argv[i + 1]);
 			else if (strcmp(argv[i], "-sync") == 0)
 				sync = 1;
-			else if (strcmp(argv[i], "-nocopy") == 0)
+			else if (strcmp(argv[i], "-memlim") == 0)
+			{
+				char *rawmemlim;
+				errno = 0;
+				rawmemlim = s_strcpy(rawmemlim, argv[i + 1]);
+				memlim = strtoul(rawmemlim, NULL, 16);
+				free(rawmemlim);
+				if (errno != 0)
+				{
+					return EINVAL;
+				}
+			}
+			else if (strcmp(argv[i], "-noop") == 0)
 				nocopy = 1;
 			else if (strcmp(argv[i], "-help") == 0)
 			{
-				printf("Mighty fast flasher in that it simply copies\ndata byte by byte from -if to -of, -sync will do an fsync after each write which is very slow");
-				printf("\nWorks best with scripted invocations.\n");
+				printf("Mighty fast flasher:\
+\nCopy data block by block from -if to -of,\
+-sync will do an fsync after each write which is very slow,\
+-memlim can be used to set a smaller io buffer value represented in percent bytes HEX (0x notation or plain number)\
+(defaults to 50%% of free ram or input file size whichever is smaller).\
+\nWorks best with scripted invocations.\n");
 				return 0;
 			}
 		}
@@ -76,46 +97,51 @@ int main(int argc, char **argv)
 		}
 	}
 
-	iblkct = tellsz(idev);
-	if (iblkct == 0)
+	if (tellsiz(idev, &inblkinf) < 0)
 	{
 		if (errno == 2)
 		{
 			fprintf(stderr, "Could not stat %s", idev);
-			goto cleanup;
 		}
+		else if (errno == 13)
+		{
+			fprintf(stderr, "Permission denied to %s", idev);
+		}
+		goto cleanup;
 	}
-
-	oblkct = tellsz(odev);
-	if (oblkct == 0)
+	if (tellsiz(odev, &oublkinf) < 0)
 	{
 		if (errno == 2)
 		{
 			fprintf(stderr, "Could not stat %s", odev);
-			goto cleanup;
 		}
+		else if (errno == 13)
+		{
+			fprintf(stderr, "Permission denied to %s", odev);
+		}
+		goto cleanup;
 	}
 
-	printf("if: %.2f MiB of: %.2f MiB\n", (double)iblkct * BUFF_SIZE / (1024 * 1024),
-	       (double)oblkct * BUFF_SIZE / (1024 * 1024));
+	printf("if(%s): %.2f MiB of(%s): %.2f MiB\n", idev, (double)inblkinf.blkcnt * inblkinf.bufsiz / (1024 * 1024), odev,
+	       (double)oublkinf.blkcnt * oublkinf.bufsiz / (1024 * 1024));
 
 	/* don't even try if the output file is smaller than the input */
-	if (oblkct < iblkct)
+	if (oublkinf.blkcnt < inblkinf.blkcnt)
 		return -1;
 
 	if (nocopy != 0)
 	{
-		printf("-nocopy issued");
-		return 0;
+		printf("\n-noop issued\n memlim: %lu \n", memlim);
+		goto cleanup;
 	}
 
-	cpr = cpnblk(odev, idev, iblkct, sync);
+	cpr = cpnblk(odev, idev, &oublkinf, &inblkinf, memlim, sync);
 	if (cpr < 0)
 		goto cleanup;
 	printf("\n%s\n", (cpr == 0 ? "Done" : "Warn"));
 	/**
- * since we allocated memory we must now free it to avoid leaks
- */
+	* since we allocated memory we must now free it to avoid leaks
+ 	*/
 cleanup:
 	free(idev);
 	free(odev);
