@@ -139,6 +139,7 @@ int main(int argc, char **argv)
 	if (cpr < 0)
 		goto cleanup;
 	printf("\n%s\n", (cpr == 0 ? "Done" : "Warn"));
+	return 0;
 	/**
 	* since we allocated memory we must now free it to avoid leaks
  	*/

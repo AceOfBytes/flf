@@ -10,8 +10,9 @@ int cpnblk(char *dest, char *src, struct dev_info *o_devinf, struct dev_info *i_
 	int ofd;
 	double percnt;
 	int i = 0;
+	int syncctr = 0;
 	unsigned long wrt = 0;
-	char *mmapbuff;
+	char *mmapbuff = 0;
 	char *buff;
 	unsigned long bufsiz = o_devinf->bufsiz;
 	unsigned long n = i_devinf->blkcnt;
@@ -27,7 +28,7 @@ int cpnblk(char *dest, char *src, struct dev_info *o_devinf, struct dev_info *i_
 		buff[i] = 0;
 
 	ifd = open(src, O_RDONLY);
-	if (sync != 0 || memlim > 0)
+	if (sync != 0)
 		ofd = open(dest, O_WRONLY | O_SYNC);
 	else
 		ofd = open(dest, O_WRONLY);
@@ -37,12 +38,12 @@ int cpnblk(char *dest, char *src, struct dev_info *o_devinf, struct dev_info *i_
 
 	if (memlim > 0)
 	{
-		mmapbuff = mmap(0, memlim, PROT_READ | PROT_EXEC, MAP_SHARED, ifd, 0);
+		mmapbuff = mmap(0, memlim, PROT_READ, MAP_SHARED, ifd, 0);
 		if (mmapbuff == MAP_FAILED)
 			return -1;
 	}
 
-	while (wrt <= n)
+	while (wrt < n)
 	{
 		if (mmapbuff == 0)
 		{
@@ -56,13 +57,20 @@ int cpnblk(char *dest, char *src, struct dev_info *o_devinf, struct dev_info *i_
 			if (wrt < n - 1)
 				for (i = 0; i < bufsiz; i++)
 					buff[i] = mmapbuff[i];
+			readsiz = bufsiz;
 		}
 
 		if (write(ofd, buff, readsiz) == -1)
 			return -1;
 
+		syncctr++;
 		wrt++;
 		percnt = ((double)wrt / (double)n) * 100.0;
+		if (syncctr >= 150000)
+		{
+			fsync(ofd);
+			syncctr = 0;
+		}
 		fprintf(stderr, "\rWritten %lu of %lu blocks (%.2f%%) to %s", wrt, n, percnt, dest);
 	}
 
