@@ -38,8 +38,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 int main(int argc, char **argv)
 {
-	struct dev_info inblkinf;
-	struct dev_info oublkinf;
+	struct fileinf srcfileinf;
+	struct fileinf destfileinf;
 	struct sysinfo sysinf;
 	unsigned long memlim = 0; /* 0 is the same as saying use 50% or if size */
 	char *idev = NULL;
@@ -50,37 +50,28 @@ int main(int argc, char **argv)
 	int i;
 
 	fprintf(stderr, "license: BSD-3-Clause\nCopyright (c) 2020, Matheus Xavier Silva\nAll rights reserved.\n");
-	if (argc <= 1)
-	{
+	if (argc <= 1) {
 		printf("need at least one argument\n");
 		return -1;
-	}
-	else
-	{
-		for (i = 0; i < argc; i++)
-		{
+	} else {
+		for (i = 0; i < argc; i++) {
 			if (strcmp(argv[i], "-if") == 0)
 				idev = s_strcpy(idev, argv[i + 1]);
 			else if (strcmp(argv[i], "-of") == 0)
 				odev = s_strcpy(odev, argv[i + 1]);
 			else if (strcmp(argv[i], "-sync") == 0)
 				sync = 1;
-			else if (strcmp(argv[i], "-memlim") == 0)
-			{
-				char *rawmemlim;
+			else if (strcmp(argv[i], "-memlim") == 0) {
+				char *rawmemlim = NULL;
 				errno = 0;
 				rawmemlim = s_strcpy(rawmemlim, argv[i + 1]);
 				memlim = strtoul(rawmemlim, NULL, 16);
 				free(rawmemlim);
 				if (errno != 0)
-				{
 					return EINVAL;
-				}
-			}
-			else if (strcmp(argv[i], "-noop") == 0)
+			} else if (strcmp(argv[i], "-noop") == 0)
 				nocopy = 1;
-			else if (strcmp(argv[i], "-help") == 0)
-			{
+			else if (strcmp(argv[i], "-help") == 0) {
 				printf("Mighty fast flasher:\
 \nCopy data block by block from -if to -of,\
 -sync will do an fsync after each write which is very slow,\
@@ -90,62 +81,51 @@ int main(int argc, char **argv)
 				return 0;
 			}
 		}
-		if (idev == NULL || odev == NULL)
-		{
+		if (idev == NULL || odev == NULL) {
 			printf("Usage: -if /dev/xxxx -of /dev/xxxx\nuse -help for more info\n");
 			return -1;
 		}
 	}
 
-	if (tellsiz(idev, &inblkinf) < 0)
-	{
-		if (errno == 2)
-		{
-			fprintf(stderr, "Could not stat %s", idev);
-		}
-		else if (errno == 13)
-		{
-			fprintf(stderr, "Permission denied to %s", idev);
-		}
-		goto cleanup;
-	}
-	if (tellsiz(odev, &oublkinf) < 0)
-	{
-		if (errno == 2)
-		{
-			fprintf(stderr, "Could not stat %s", odev);
-		}
-		else if (errno == 13)
-		{
-			fprintf(stderr, "Permission denied to %s", odev);
+	if (advstat(idev, &srcfileinf) < 0) {
+		if (errno == 2) {
+			fprintf(stderr, "Could not stat %s\n", idev);
+		} else if (errno == 13) {
+			fprintf(stderr, "Permission denied to %s\n", idev);
 		}
 		goto cleanup;
 	}
 
-	printf("if(%s): %.2f MiB of(%s): %.2f MiB\n", idev, (double)inblkinf.blkcnt * inblkinf.bufsiz / (1024 * 1024), odev,
-	       (double)oublkinf.blkcnt * oublkinf.bufsiz / (1024 * 1024));
+	if (advstat(odev, &destfileinf) < 0) {
+		if (errno == 2) {
+			fprintf(stderr, "Could not stat %s\n", odev);
+		} else if (errno == 13) {
+			fprintf(stderr, "Permission denied to %s\n", odev);
+		}
+		goto cleanup;
+	}
+	/* Free the original path strings as they are no longer needed */
+	free(idev);
+	free(odev);
 
-	/* don't even try if the output file is smaller than the input */
-	if (oublkinf.blkcnt < inblkinf.blkcnt)
-		return -1;
-
-	if (nocopy != 0)
-	{
+	/* checks needed before flashing */
+	if (nocopy != 0) {
 		printf("\n-noop issued\n memlim: %lu \n", memlim);
 		goto cleanup;
 	}
 
-	cpr = cpnblk(odev, idev, &oublkinf, &inblkinf, memlim, sync);
+	cpr = cpnblk(&destfileinf, &srcfileinf, memlim, srcfileinf.blkcnt, sync);
 	if (cpr < 0)
 		goto cleanup;
+
 	printf("\n%s\n", (cpr == 0 ? "Done" : "Warn"));
 	return 0;
-	/**
-	* since we allocated memory we must now free it to avoid leaks
- 	*/
 cleanup:
-	free(idev);
-	free(odev);
-	fprintf(stderr, "errno %d", errno);
+	/* since we allocated memory we must now free it to avoid leaks */
+	/*free(&srcfileinf);
+	free(&destfileinf);*/
+	if (errno != 0) {
+		fprintf(stderr, "errno %d\n", errno);
+	}
 	return errno == 0 ? 0 : errno;
 }

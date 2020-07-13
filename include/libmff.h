@@ -16,26 +16,36 @@
 #include <sys/mman.h>
 #include <string.h>
 
-struct dev_info
+struct fileinf
 {
 	size_t blkcnt;
-	size_t bufsiz;
+	size_t blksiz;
+	char *path;
 	int isblk;
+	int ischar;
 };
 
 /**
- * returns 0 on success and -1 on error
- **/
-int tellsiz(char *path, struct dev_info *devinf);
+ * Stat path and fill fi with the relevant information
+ * @param path
+ * @param fi
+ * @return 0 on success -1 on failure (fi will have zeroed fields on failure)
+ */
+int advstat(char *path, struct fileinf *fi);
 /**
- * takes: two paths, destination and source in that order, number of buffer
- * copies to make, buffer size and if sync flag should be used with open
- * or a big fsync after.
- * returns: les than, zero, or more if respectively
- * failed to read or write, copied the buffer exactly n times or
- * copied the buffer less than n times.
- * ATTENTION: sync is a boolean anything other than 0 is true
+ * Copy at most n blocks from srcdev to destdev, you are responsible for
+ * ensuring that destdev has enough free space.
+ * @param src a fileinf struct pointing to the source device/file
+ * @param dest
+ * @param memlim
+ * @param n
+ * @param sync
+ * @return
+ */
+int cpnblk(struct fileinf *dest, struct fileinf *src, unsigned long memlim, unsigned long n, int sync);
+/**
+ * WARNING: this function may allocate memory,
+ * remember to free the returned buffer as soon as possible.
 */
-int cpnblk(char *dest, char *src, struct dev_info *o_devinf, struct dev_info *i_devinf, unsigned long memlim, int sync);
 char *s_strcpy(char *dest, char *src);
 #endif
