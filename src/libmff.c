@@ -159,27 +159,38 @@ __cpnblk_end:
 /* this function should not be called directly */
 int __cpnbytes_mmap(int dest, int src, size_t mem_lim, size_t n, size_t offset, size_t buff_size)
 {
-	char *destbuff;
+	char *caret;
 	char *srcbuff;
-	size_t page_size = getpagesize();
+	size_t page_size = mem_lim;
 	size_t written = 0;
 	size_t src_pos = 0;
-	size_t dest_pos = 0;
 
 	srcbuff = mmap(NULL, page_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE, src, 0);
-	if (destbuff == MAP_FAILED || srcbuff == MAP_FAILED)
+
+	if (srcbuff == MAP_FAILED)
+		goto __cpnblk_mmap_end;
+
+	caret = malloc(buff_size);
+	if (!caret)
 		goto __cpnblk_mmap_end;
 
 	while (written < n) {
-		src_pos = (offset + written) * buff_size;
-		dest_pos = written * buff_size;
-		memcpy(destbuff + src_pos, srcbuff + dest_pos, buff_size);
+		src_pos = written * buff_size;
+		if (memcpy(caret, srcbuff + src_pos, buff_size) == 0) {
+			/* if the memcpy fails try to swap the part of the file that is mapped */
+			munmap(srcbuff, page_size);
+			srcbuff = mmap(NULL, page_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE, src, src_pos);
+			if (srcbuff == MAP_FAILED)
+				goto __cpnblk_mmap_end;
+		}
+		if (write(dest, caret, buff_size) == -1)
+			goto __cpnblk_mmap_end;
 		written++;
 		fprintf(stderr, "\r{\"written\": %lu, \"total\": %lu}", written, n);
 	}
 
 __cpnblk_mmap_end:
-	munmap(destbuff, page_size);
 	munmap(srcbuff, page_size);
+	free(caret);
 	return errno == 0 ? 0 : -1;
 }
