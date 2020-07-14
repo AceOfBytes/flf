@@ -114,7 +114,12 @@ int main(int argc, char **argv)
 		goto cleanup;
 	}
 
-	cpr = cpnblk(&destfileinf, &srcfileinf, memlim, srcfileinf.blkcnt, sync);
+	if (srcfileinf.ischar){
+		cpr = cpnblk(&destfileinf, &srcfileinf, memlim, destfileinf.blkcnt, sync);
+	} else {
+		cpr = cpnblk(&destfileinf, &srcfileinf, memlim, srcfileinf.blkcnt, sync);
+	}
+
 	if (cpr < 0)
 		goto cleanup;
 

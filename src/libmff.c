@@ -115,9 +115,10 @@ int cpnblk(struct fileinf *dest, struct fileinf *src, unsigned long memlim, unsi
 		return -1;
 
 	if (memlim > 0) {
-		if (__cpnbytes_mmap(ofd, ifd, memlim, n, 0, bufsiz) == -1) {
+		if (__cpnbytes_mmap(ofd, ifd, memlim, n, 0, bufsiz) == -1)
 			goto __cpnblk_end;
-		}
+
+		wrt = n;
 	} else {
 		while (wrt < n) {
 			readsiz = read(ifd, buff, bufsiz);
@@ -163,7 +164,9 @@ int __cpnbytes_mmap(int dest, int src, size_t mem_lim, size_t n, size_t offset, 
 	char *srcbuff;
 	size_t page_size = mem_lim;
 	size_t written = 0;
-	size_t src_pos = 0;
+	size_t left = 0;
+	size_t src_pos;
+	size_t abs_siz;
 
 	srcbuff = mmap(NULL, page_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE, src, 0);
 
@@ -174,19 +177,24 @@ int __cpnbytes_mmap(int dest, int src, size_t mem_lim, size_t n, size_t offset, 
 	if (!caret)
 		goto __cpnblk_mmap_end;
 
+	abs_siz = n * buff_size;
+	left = abs_siz;
+
 	while (written < n) {
-		src_pos = written * buff_size;
+		src_pos = abs_siz - left;
 		if (memcpy(caret, srcbuff + src_pos, buff_size) == 0) {
 			/* if the memcpy fails try to swap the part of the file that is mapped */
 			munmap(srcbuff, page_size);
 			srcbuff = mmap(NULL, page_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE, src, src_pos);
 			if (srcbuff == MAP_FAILED)
 				goto __cpnblk_mmap_end;
+			goto __cpnblk_mmap_end;
 		}
 		if (write(dest, caret, buff_size) == -1)
 			goto __cpnblk_mmap_end;
 		written++;
-		fprintf(stderr, "\r{\"written\": %lu, \"total\": %lu}", written, n);
+		left -= buff_size;
+		fprintf(stderr,"\r{\"written\": %lu, \"total\": %lu}", written, n);
 	}
 
 __cpnblk_mmap_end:
