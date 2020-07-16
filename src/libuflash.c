@@ -1,19 +1,19 @@
 /**
- * license: BSD-3-Clause
+ * SPDX-License-Identifier: BSD-3-Clause
 */
 
-#include <libmff.h>
+#include <libuflash.h>
 
-int __cpnbytes_mmap(int dest, int src, size_t mem_lim, size_t n, size_t offset, size_t buff_size);
+int cp_nbytes_mmap(int dest, int src, int rprtfd, size_t mem_lim, size_t n, size_t offset, size_t buff_size);
 
-int advstat(char *path, struct fileinf *fi)
+int uf_stat(char *path, struct uf_st *fi)
 {
 	int fd;
 	struct stat st;
-	struct fileinf *_devinf;
+	struct uf_st *_devinf;
 	unsigned long nblk = 0;
 
-	_devinf = malloc(sizeof(struct fileinf));
+	_devinf = malloc(sizeof(struct uf_st));
 	if (_devinf == 0)
 		return -1;
 
@@ -21,7 +21,7 @@ int advstat(char *path, struct fileinf *fi)
 	_devinf->ischar = 0;
 	_devinf->blkcnt = 0;
 	_devinf->blksiz = 0;
-	_devinf->path = s_strcpy(_devinf->path, path);
+	_devinf->path = uf_sstrcpy(_devinf->path, path);
 
 	fd = open(path, O_RDONLY | O_NONBLOCK);
 	if (fd < 0)
@@ -49,17 +49,17 @@ int advstat(char *path, struct fileinf *fi)
 	_devinf->blkcnt = nblk;
 	_devinf->blksiz = st.st_blksize / 8;
 
-	memmove(fi, _devinf, sizeof(struct fileinf));
+	memmove(fi, _devinf, sizeof(struct uf_st));
 
 	close(fd);
 	return 0;
 advstat_fail:
 	close(fd);
-	memmove(fi, _devinf, sizeof(struct fileinf));
+	memmove(fi, _devinf, sizeof(struct uf_st));
 	return -1;
 }
 
-char *s_strcpy(char *dest, char *src)
+char *uf_sstrcpy(char *dest, char *src)
 {
 	size_t srclen = 0;
 	size_t destlen = 0;
@@ -85,96 +85,52 @@ char *s_strcpy(char *dest, char *src)
 	return strncpy(dest, src, srclen);
 }
 
-int cpnblk(struct fileinf *dest, struct fileinf *src, unsigned long memlim, unsigned long n, int sync)
+int uf_cpy_nblk(struct uf_st *dest, struct uf_st *src, struct uf_cpycfg *cfg)
 {
-	int ifd;
 	int ofd;
-	int i;
-	int syncctr = 0;
-	unsigned long wrt = 0;
-	char *buff;
-	unsigned long bufsiz = src->blksiz;
-	unsigned long readsiz = 0;
+	int ifd;
 
-	/* allocate the buffer */
-	buff = malloc(sizeof(char) * bufsiz);
-	if (!buff)
-		return -1;
+	if((ifd = open(src->path, O_RDONLY)) == -1)
+		goto __uf_cpy_nblk_err;
 
-	/* zero fill buffer */
-	for (i = 0; i < bufsiz; i++)
-		buff[i] = 0;
+	if((ofd = open(src->path, O_RDONLY)) == -1)
+		goto __uf_cpy_nblk_err;
 
-	ifd = open(src->path, O_RDONLY);
-	if (sync && memlim == 0)
-		ofd = open(dest->path, O_WRONLY | O_SYNC);
-	else
-		ofd = open(dest->path, O_WRONLY);
-
-	if (ifd == -1 || ofd == -1)
-		return -1;
-
-	if (memlim > 0) {
-		if (__cpnbytes_mmap(ofd, ifd, memlim, n, 0, bufsiz) == -1)
-			goto __cpnblk_end;
-
-		wrt = n;
-	} else {
-		while (wrt < n) {
-			readsiz = read(ifd, buff, bufsiz);
-
-			if (readsiz <= 0)
-				break;
-
-			if (write(ofd, buff, readsiz) == -1)
-				return -1;
-
-			syncctr++;
-			wrt++;
-			if (syncctr >= 150000) {
-				fsync(ofd);
-				syncctr = 0;
-			}
-			fprintf(stderr, "\r{\"written\": %lu, \"total\": %lu}", wrt, n);
-		}
+	if (cfg == NULL) {
+		errno = EINVAL;
+		goto __uf_cpy_nblk_err;
 	}
 
-	if (sync == 0)
-		fsync(ofd);
+	if (cfg->mem_lim > 0)
+		cp_nbytes_mmap(ofd, ifd);
 
-	/* clear the buffer just in case any sensitive information was held */
-	for (i = 0; i < bufsiz; i++)
-		buff[i] = 0;
-
-__cpnblk_end:
-	/* release the resources */
-	free(buff);
+__uf_cpy_nblk_err:
 	close(ifd);
 	close(ofd);
-	if (errno != 0) {
-		return -1;
-	}
-	return wrt == n ? 0 : 1;
+	return -1;
 }
 
 /* this function should not be called directly */
-int __cpnbytes_mmap(int dest, int src, size_t mem_lim, size_t n, size_t offset, size_t buff_size)
+int cp_nbytes_mmap(int dest, int src, int rprtfd, size_t mem_lim, size_t n, size_t offset, size_t buff_size)
 {
-	char *caret;
-	char *srcbuff;
+	char *caret = 0;
+	char *srcbuff = NULL;
+	FILE *fifofs;
 	size_t page_size = mem_lim;
 	size_t written = 0;
-	size_t left = 0;
+	size_t left;
 	size_t src_pos;
 	size_t abs_siz;
 
-	srcbuff = mmap(NULL, page_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE, src, 0);
+	if (rprtfd != -1)
+		if ((fifofs = fdopen(rprtfd, "w")) != NULL)
+			goto __cpnblk_mmap_end;
 
+	srcbuff = mmap(NULL, page_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE, src, 0);
 	if (srcbuff == MAP_FAILED)
 		goto __cpnblk_mmap_end;
 
-	caret = malloc(buff_size);
-	if (!caret)
+	if (!(caret = malloc(buff_size)))
 		goto __cpnblk_mmap_end;
 
 	abs_siz = n * buff_size;
@@ -192,9 +148,11 @@ int __cpnbytes_mmap(int dest, int src, size_t mem_lim, size_t n, size_t offset, 
 		}
 		if (write(dest, caret, buff_size) == -1)
 			goto __cpnblk_mmap_end;
+
 		written++;
 		left -= buff_size;
-		fprintf(stderr,"\r{\"written\": %lu, \"total\": %lu}", written, n);
+		if (rprtfd != -1)
+			fprintf(fifofs, "{\"written\": %lu,\"total\": %lu}", written, n);
 	}
 
 __cpnblk_mmap_end:

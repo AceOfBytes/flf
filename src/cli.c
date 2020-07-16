@@ -1,5 +1,6 @@
 /*
-license: BSD-3-Clause
+SPDX-License-Identifier: BSD-3-Clause
+
 Copyright (c) 2020, Matheus Xavier Silva
 All rights reserved.
 
@@ -31,16 +32,22 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <stdlib.h>
 #include <stdio.h>
-#include <libmff.h>
+#include <libuflash.h>
 #include <string.h>
 #include <sys/sysinfo.h>
 #include <inttypes.h>
+#include <errno.h>
+#include "getcomp.h"
+
+# define CLI_VERSION "v0.1.0"
 
 int main(int argc, char **argv)
 {
-	struct fileinf srcfileinf;
-	struct fileinf destfileinf;
+	struct uf_st srcfileinf;
+	struct uf_st destfileinf;
+	struct uf_cpycfg cfg;
 	struct sysinfo sysinf;
+	int pipe_fdv[2] = {4, 5};
 	unsigned long memlim = 0; /* 0 is the same as saying use 50% or if size */
 	char *idev = NULL;
 	char *odev = NULL;
@@ -49,28 +56,33 @@ int main(int argc, char **argv)
 	int cpr;
 	int i;
 
-	fprintf(stderr, "license: BSD-3-Clause\nCopyright (c) 2020, Matheus Xavier Silva\nAll rights reserved.\n");
+	printf("Copyright (c) 2020, Matheus Xavier Silva, All rights reserved.\nBSD-3-Clause licensed\n");
+	printf("ufl %s ufl: %s, libuflash: %s\n", getcomp(), CLI_VERSION, __LIB_UFLASH_VERSION);
 	if (argc <= 1) {
 		printf("need at least one argument\n");
 		return -1;
 	} else {
 		for (i = 0; i < argc; i++) {
-			if (strcmp(argv[i], "-if") == 0)
-				idev = s_strcpy(idev, argv[i + 1]);
-			else if (strcmp(argv[i], "-of") == 0)
-				odev = s_strcpy(odev, argv[i + 1]);
-			else if (strcmp(argv[i], "-sync") == 0)
+			if (strcmp(argv[i], "-if") == 0) {
+				idev = uf_sstrcpy(idev, argv[i + 1]);
+			}
+			else if (strcmp(argv[i], "-of") == 0) {
+				odev = uf_sstrcpy(odev, argv[i + 1]);
+			}
+			else if (strcmp(argv[i], "-sync") == 0) {
 				sync = 1;
+			}
 			else if (strcmp(argv[i], "-memlim") == 0) {
 				char *rawmemlim = NULL;
 				errno = 0;
-				rawmemlim = s_strcpy(rawmemlim, argv[i + 1]);
+				rawmemlim = uf_sstrcpy(rawmemlim, argv[i + 1]);
 				memlim = strtoul(rawmemlim, NULL, 16);
 				free(rawmemlim);
 				if (errno != 0)
 					return EINVAL;
-			} else if (strcmp(argv[i], "-noop") == 0)
+			} else if (strcmp(argv[i], "-nop") == 0) {
 				nocopy = 1;
+			}
 			else if (strcmp(argv[i], "-help") == 0) {
 				printf("Mighty fast flasher:\
 \nCopy data block by block from -if to -of,\
@@ -87,19 +99,19 @@ int main(int argc, char **argv)
 		}
 	}
 
-	if (advstat(idev, &srcfileinf) < 0) {
-		if (errno == 2) {
+	if (uf_stat(idev, &srcfileinf) < 0) {
+		if (errno == ENOENT) {
 			fprintf(stderr, "Could not stat %s\n", idev);
-		} else if (errno == 13) {
+		} else if (errno == EACCES) {
 			fprintf(stderr, "Permission denied to %s\n", idev);
 		}
 		goto cleanup;
 	}
 
-	if (advstat(odev, &destfileinf) < 0) {
-		if (errno == 2) {
+	if (uf_stat(odev, &destfileinf) < 0) {
+		if (errno == ENOENT) {
 			fprintf(stderr, "Could not stat %s\n", odev);
-		} else if (errno == 13) {
+		} else if (errno == EACCES) {
 			fprintf(stderr, "Permission denied to %s\n", odev);
 		}
 		goto cleanup;
@@ -110,14 +122,26 @@ int main(int argc, char **argv)
 
 	/* checks needed before flashing */
 	if (nocopy != 0) {
-		printf("\n-noop issued\n memlim: %lu \n", memlim);
+		printf("\n-nop issued\n memlim: %lu \n", memlim);
 		goto cleanup;
 	}
 
 	if (srcfileinf.ischar){
-		cpr = cpnblk(&destfileinf, &srcfileinf, memlim, destfileinf.blkcnt, sync);
+		cfg.mem_lim = memlim;
+		cfg.sync_f = sync ? true : false;
+		cfg.at_most = destfileinf.blkcnt;
+		cfg.i_offset = 0;
+		cfg.o_offset = 0;
+		cfg.out_fd = pipe_fdv[1];
+		cpr = uf_cpy_nblk(&destfileinf, &srcfileinf, &cfg);
 	} else {
-		cpr = cpnblk(&destfileinf, &srcfileinf, memlim, srcfileinf.blkcnt, sync);
+		cfg.mem_lim = memlim;
+		cfg.sync_f = sync ? true : false;
+		cfg.at_most = srcfileinf.blkcnt;
+		cfg.i_offset = 0;
+		cfg.o_offset = 0;
+		cfg.out_fd = pipe_fdv[1];
+		cpr = uf_cpy_nblk(&destfileinf, &srcfileinf, &cfg);
 	}
 
 	if (cpr < 0)
@@ -126,9 +150,7 @@ int main(int argc, char **argv)
 	printf("\n%s\n", (cpr == 0 ? "Done" : "Warn"));
 	return 0;
 cleanup:
-	/* since we allocated memory we must now free it to avoid leaks */
-	/*free(&srcfileinf);
-	free(&destfileinf);*/
+	/* since memory was allocated it must be freed */
 	if (errno != 0) {
 		fprintf(stderr, "errno %d\n", errno);
 	}

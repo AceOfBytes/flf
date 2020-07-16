@@ -3,6 +3,6 @@ project(mff C)
 
 set(CMAKE_C_STANDARD 99)
 
-add_library(mffs SHARED src/libmff.c include/libmff.h)
-add_executable(mff src/main.c include/libmff.h src/libmff.c)
+add_library(uflasher SHARED src/libuflash.c include/libuflash.h)
+add_executable(ufl src/cli.c include/libuflash.h src/libuflash.c src/getcomp.h)
 include_directories(include)
